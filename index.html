@@ -87,7 +87,6 @@
      o usar la API BarcodeDetector si el navegador del celular la soporta de forma nativa -->
 <script>
     // Configurar fecha de hoy por defecto
-    document.getElementById('purchase-date').valueToDate = new Date();
     document.getElementById('purchase-date').value = new Date().toISOString().substring(0, 10);
 
     const btnScan = document.getElementById('btn-scan');
@@ -96,9 +95,17 @@
     const barcodeInput = document.getElementById('barcode');
     const shopSelect = document.getElementById('shop-select');
     const newShopFields = document.getElementById('new-shop-fields');
+    const btnSubmit = document.getElementById('btn-submit');
     
-    // URL de tu Web App de Google Apps Script (se reemplaza al publicar)
-    const WEB_APP_URL = https://script.google.com/macros/s/AKfycbyzzdt8_vHB72Hak6LhK50GpQ5Xr8nzSgeRIfHuxlJsJd30givBmOk5nuv8fPgEWAVELQ/exec;
+    // Tu URL ya pegada
+    const WEB_APP_URL = "TU_WEB_APP_URL_AQUI"; // <-- Asegurate de que quede tu URL real acá
+    const MI_TOKEN_SECRETO = "MiClaveSuperSegura123"; // <-- Cambiala por tu clave
+
+    // Variables de control de estado del producto
+    let esNuevoProducto = false;
+
+    // Al cargar la página, traer los comercios ya guardados en Sheets
+    window.addEventListener('DOMContentLoaded', cargarLugares);
 
     // Mostrar campos si se selecciona "Agregar nuevo lugar"
     shopSelect.addEventListener('change', (e) => {
@@ -109,10 +116,17 @@
         }
     });
 
-    // Simulación de inicialización de cámara y escaneo nativo (BarcodeDetector API)
+    // Detectar cuando el usuario escribe a mano o el escáner pega un código
+    barcodeInput.addEventListener('change', (e) => {
+        if (e.target.value.trim() !== "") {
+            buscarProductoEnSheets(e.target.value.trim());
+        }
+    });
+
+    // --- FUNCIÓN DE ESCANEO POR CÁMARA ---
     btnScan.addEventListener('click', async () => {
         if (!('BarcodeDetector' in window)) {
-            showStatus('Tu navegador no soporta escaneo nativo por cámara. Ingresa el código manualmente o usa una librería como QuaggaJS.', 'error');
+            showStatus('Tu navegador no soporta escaneo nativo. Ingresá el código manualmente.', 'error');
             return;
         }
         
@@ -128,13 +142,15 @@
                 try {
                     const barcodes = await barcodeDetector.detect(video);
                     if (barcodes.length > 0) {
-                        barcodeInput.value = barcodes[0].rawValue;
+                        const codigo = barcodes[0].rawValue;
+                        barcodeInput.value = codigo;
                         showStatus('¡Código detectado!', 'success');
                         clearInterval(interval);
                         stream.getTracks().forEach(track => track.stop());
                         scannerContainer.style.display = 'none';
-                        // Disparar búsqueda del producto en Sheets
-                        checkProduct(barcodes[0].rawValue);
+                        
+                        // Buscar en Sheets inmediatamente después de escanear
+                        buscarProductoEnSheets(codigo);
                     }
                 } catch (err) {
                     console.error(err);
@@ -146,19 +162,144 @@
         }
     });
 
+    // --- COMUNICACIÓN CON GOOGLE SHEETS ---
+
+    // 1. Cargar la lista de Lugares (Función doGet)
+    async function cargarLugares() {
+        try {
+            const response = await fetch(WEB_APP_URL);
+            const data = await response.json();
+            if (data.lugares) {
+                // Limpiar opciones previas excepto las básicas
+                shopSelect.innerHTML = `
+                    <option value="">-- Seleccionar lugar --</option>
+                    <option value="NEW">➕ Agregar nuevo lugar...</option>
+                `;
+                data.lugares.forEach(lugar => {
+                    const opt = document.createElement('option');
+                    opt.value = lugar;
+                    opt.textContent = lugar;
+                    // Insertar antes del botón "Agregar nuevo"
+                    shopSelect.insertBefore(opt, shopSelect.lastElementChild);
+                });
+            }
+        } catch (error) {
+            console.error("Error al cargar comercios:", error);
+        }
+    }
+
+    // 2. Buscar si el producto ya existe en Sheets
+    async function buscarProductoEnSheets(codigo) {
+        showStatus('Buscando producto en tu base de datos...', 'info');
+        
+        try {
+            // Le hacemos una petición GET a la Web App pasándole el código para buscarlo
+            const response = await fetch(`${WEB_APP_URL}?action=buscarProducto&codigo=${codigo}`);
+            const data = await response.json();
+            
+            const divNuevo = document.getElementById('new-product-fields');
+            const divExistente = document.getElementById('existing-product-info');
+            const lblProdName = document.getElementById('lbl-prod-name');
+
+            if (data.existe) {
+                esNuevoProducto = false;
+                divNuevo.classList.add('hidden');
+                divExistente.classList.remove('hidden');
+                lblProdName.textContent = `${data.nombre} (${data.marca})`;
+                showStatus('Producto encontrado.', 'success');
+            } else {
+                esNuevoProducto = true;
+                divExistente.classList.add('hidden');
+                divNuevo.classList.remove('hidden');
+                document.getElementById('prod-name').value = "";
+                document.getElementById('prod-brand').value = "";
+                showStatus('Código nuevo. Por favor, completá los detalles del producto.', 'info');
+            }
+        } catch (error) {
+            showStatus('Error de conexión al buscar producto.', 'error');
+            console.error(error);
+        }
+    }
+
+    // 3. Enviar todo el registro de compra (Función doPost)
+    btnSubmit.addEventListener('click', async () => {
+        const codigo = barcodeInput.value.trim();
+        const fecha = document.getElementById('purchase-date').value;
+        let lugar = shopSelect.value;
+        const precio = document.getElementById('price').value;
+        const cantidad = document.getElementById('quantity').value;
+
+        // Validaciones básicas
+        if (!codigo || !fecha || !lugar || !precio) {
+            showStatus('Por favor, completá todos los campos obligatorios.', 'error');
+            return;
+        }
+
+        let esNuevoLugar = false;
+        if (lugar === 'NEW') {
+            lugar = document.getElementById('new-shop-name').value.trim();
+            if (!lugar) {
+                showStatus('Escribí el nombre del nuevo comercio.', 'error');
+                return;
+            }
+            esNuevoLugar = true;
+        }
+
+        // Armamos el paquete de datos
+        const payload = {
+            token: MI_TOKEN_SECRETO,
+            codigoBarras: codigo,
+            fecha: fecha,
+            lugarNombre: lugar,
+            precio: precio,
+            cantidad: cantidad,
+            esNuevoProducto: esNuevoProducto,
+            esNuevoLugar: esNuevoLugar,
+            nombreProducto: esNuevoProducto ? document.getElementById('prod-name').value.trim() : "",
+            marcaProduct: esNuevoProducto ? document.getElementById('prod-brand').value.trim() : ""
+        };
+
+        showStatus('Registrando compra...', 'info');
+
+        try {
+            const response = await fetch(WEB_APP_URL, {
+                method: 'POST',
+                mode: 'no-cors', // Evita problemas de CORS comunes con Apps Script
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            // Al usar 'no-cors', no podemos leer la respuesta JSON directa por seguridad del navegador,
+            // pero si la petición se realiza con éxito, asumimos el guardado.
+            showStatus('¡Compra registrada con éxito!', 'success');
+            
+            // Limpiar formulario para la siguiente compra
+            barcodeInput.value = "";
+            document.getElementById('price').value = "";
+            document.getElementById('quantity').value = "1";
+            document.getElementById('new-product-fields').classList.add('hidden');
+            document.getElementById('existing-product-info').classList.add('hidden');
+            newShopFields.classList.add('hidden');
+            
+            // Recargar la lista de lugares por si agregamos uno nuevo
+            if (esNuevoLugar) {
+                setTimeout(cargarLugares, 1500);
+            }
+
+        } catch (error) {
+            showStatus('Ocurrió un error al enviar los datos.', 'error');
+            console.error(error);
+        }
+    });
+
     function showStatus(text, type) {
         const msg = document.getElementById('status-message');
         msg.innerText = text;
         msg.className = 'status ' + type;
-        setTimeout(() => msg.style.display = 'none', 5000);
-    }
-
-    function checkProduct(code) {
-        // Aquí se haría un fetch a Google Apps Script para saber si el producto existe
-        showStatus('Buscando producto en Google Sheets...', 'info');
-        // Simulación de respuesta de red:
-        // Si existe: mostrar #existing-product-info
-        // Si no existe: mostrar #new-product-fields
+        msg.style.display = 'block';
+        setTimeout(() => msg.style.display = 'none', 6000);
     }
 </script>
 </body>
