@@ -98,9 +98,8 @@
     const btnSubmit = document.getElementById('btn-submit');
     
     // Tu URL ya pegada
-    const WEB_APP_URL = "TU_WEB_APP_URL_AQUI"; // <-- Asegurate de que quede tu URL real acá
-    const MI_TOKEN_SECRETO = "MiClaveSuperSegura123"; // <-- Cambiala por tu clave
-
+    const WEB_APP_URL = https://script.google.com/macros/s/AKfycbyzzdt8_vHB72Hak6LhK50GpQ5Xr8nzSgeRIfHuxlJsJd30givBmOk5nuv8fPgEWAVELQ/exec; // <-- Asegurate de que quede tu URL real acá
+   
     // Variables de control de estado del producto
     let esNuevoProducto = false;
 
@@ -247,7 +246,6 @@
 
         // Armamos el paquete de datos
         const payload = {
-            token: MI_TOKEN_SECRETO,
             codigoBarras: codigo,
             fecha: fecha,
             lugarNombre: lugar,
